@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Image Splitter</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@1/css/pico.min.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.1.5/jszip.min.js"></script>
+  <style>
+    [data-theme="light"], :root:not([data-theme="dark"]) { --primary: #546e7a; --primary-hover: #455a64; --primary-focus: rgba(84, 110, 122, 0.125); --primary-inverse: #FFF; } @media only screen and (prefers-color-scheme: dark) { :root:not([data-theme]) { --primary: #546e7a; --primary-hover: #607d8b; --primary-focus: rgba(84, 110, 122, 0.25); --primary-inverse: #FFF; } } [data-theme="dark"] { --primary: #546e7a; --primary-hover: #607d8b; --primary-focus: rgba(84, 110, 122, 0.25); --primary-inverse: #FFF; } :root { --form-element-active-border-color: var(--primary); --form-element-focus-color: var(--primary-focus); --switch-color: var(--primary-inverse); --switch-checked-background-color: var(--primary); } #preview-container { position: relative; } .grid-overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; display: grid; gap: 1px; pointer-events: none; } .grid-cell { background-color: var(--primary); opacity: 0.5; } #output-container { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 20px; } .output-image, .preview-image { max-width: 100%; height: auto; } .switch-margin { margin-bottom: 10px; } .split-buttons { display: flex; gap: 15px; margin-top: 15px; } button { flex: 1; }
+  </style>
+</head>
+<body>
+
+  <div class="container">
+    <h1>Image Splitter</h1>
+
+    <label for="imageInput">Upload an image:</label>
+    <input type="file" id="imageInput" accept="image/*">
+
+    <p id="imageDimensions"></p>
+
+    <label for="splitMethod">Splitting Method:</label>
+    <select id="splitMethod"><option value="dimensions">Number of images (width x height):</option><option value="pixel">Pixel dimensions (width x height):</option></select>
+
+    <label for="widthInput">Width:</label>
+    <input type="number" id="widthInput" placeholder="Width">
+
+    <label for="heightInput">Height:</label>
+    <input type="number" id="heightInput" placeholder="Height">
+
+    <div class="switch-margin">
+      <input type="checkbox" id="DeleteEmpty" name="DeleteEmpty" role="switch">
+      <label for="DeleteEmpty">Delete empty images</label>
+    </div>
+
+    <div class="split-buttons">
+      <button onclick="splitImage()" aria-live="polite" aria-busy="false">Split Image</button>
+      <button onclick="downloadZip()">Download ZIP</button>
+    </div>
+
+    <div id="preview-container"><div class="grid-overlay"></div></div>
+    
+    <div id="output-container"></div>
+  </div>
+
+  <script>
+    async function splitImage() {
+      const input = document.getElementById('imageInput');
+      const method = document.getElementById('splitMethod').value;
+      const width = document.getElementById('widthInput').value;
+      const height = document.getElementById('heightInput').value;
+      const deleteEmpty = document.getElementById('DeleteEmpty').checked;
+      const splitButton = document.querySelector('button[aria-busy="false"]');
+
+      if (!input.files.length || !width || !height) {
+        alert('Provide an image and specify width and height.');
+        return;
+      }
+
+      splitButton.setAttribute('aria-busy', 'true');
+      splitButton.textContent = 'Please wait...';
+
+      const file = input.files[0];
+      const img = document.createElement('img');
+      const reader = new FileReader();
+
+      await new Promise((resolve) => {
+        reader.onload = function (e) {
+          img.src = e.target.result;
+
+          img.onload = async function () {
+            const preview = document.getElementById('preview-container');
+            const grid = preview.querySelector('.grid-overlay');
+            grid.style.setProperty('--grid-columns', width);
+            grid.style.setProperty('--grid-rows', height);
+
+            const output = document.getElementById('output-container');
+            output.innerHTML = '';
+
+            const canvas = document.createElement('canvas');
+            const ctx = canvas.getContext('2d');
+            canvas.width = img.width;
+            canvas.height = img.height;
+            ctx.drawImage(img, 0, 0, img.width, img.height);
+
+            const countX = method === 'dimensions' ? width : Math.floor(img.width / width);
+            const countY = method === 'dimensions' ? height : Math.floor(img.height / height);
+
+            const segWidth = img.width / countX;
+            const segHeight = img.height / countY;
+
+            for (let y = 0; y < countY; y++) {
+              for (let x = 0; x < countX; x++) {
+                const startX = x * segWidth;
+                const startY = y * segHeight;
+                const imageData = ctx.getImageData(startX, startY, segWidth, segHeight);
+
+                if (deleteEmpty && isImageEmpty(imageData)) continue;
+
+                await new Promise((resolve) => setTimeout(resolve, 10)); // Aggiunto ritardo di 10ms
+
+                const segCanvas = document.createElement('canvas');
+                const segCtx = segCanvas.getContext('2d');
+                segCanvas.width = segWidth;
+                segCanvas.height = segHeight;
+                segCtx.putImageData(imageData, 0, 0);
+
+                const outputImage = document.createElement('img');
+                outputImage.src = segCanvas.toDataURL();
+                outputImage.classList.add('output-image');
+                output.appendChild(outputImage);
+              }
+            }
+
+            splitButton.setAttribute('aria-busy', 'false');
+            splitButton.textContent = 'Split Image';
+            resolve();
+          };
+        };
+
+        reader.readAsDataURL(file);
+      });
+    }
+
+    function isImageEmpty(imageData) {
+      for (let i = 0; i < imageData.data.length; i++) {
+        if (imageData.data[i] !== 0) return false;
+      }
+      return true;
+    }
+
+    function downloadZip() {
+      const zip = new JSZip();
+      const outputContainer = document.getElementById('output-container');
+
+      Array.from(outputContainer.children).forEach((outputImage, index) => {
+        const dataUrl = outputImage.src;
+        const base64Data = dataUrl.split(',')[1];
+        zip.file(`image_${index + 1}.png`, base64Data, { base64: true });
+      });
+
+      zip.generateAsync({ type: 'blob' })
+        .then(function (blob) {
+          const zipFilename = 'images.zip';
+          const a = document.createElement('a');
+          a.href = URL.createObjectURL(blob);
+          a.download = zipFilename;
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+        });
+    }
+
+    document.getElementById('imageInput').addEventListener('change', function() {
+      const input = this;
+      if (input.files && input.files[0]) {
+        const img = document.createElement('img');
+        const reader = new FileReader();
+
+        reader.onload = function (e) {
+          img.src = e.target.result;
+          img.onload = function () {
+            const dimensionsParagraph = document.getElementById('imageDimensions');
+            dimensionsParagraph.textContent = `Image Dimensions: ${img.width} x ${img.height} pixels`;
+          };
+        };
+
+        reader.readAsDataURL(input.files[0]);
+      }
+    });
+  </script>
+
+</body>
+</html>
